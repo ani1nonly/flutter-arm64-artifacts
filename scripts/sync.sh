@@ -29,13 +29,15 @@ case "$VARIANT" in
     # No Termux patches. Apply the upstream #187591 patch in two phases:
     #  1. DEPS hunk BEFORE sync so gclient fetches the linux-arm64 clang
     #  2. remaining hunks AFTER sync so engine source files now exist
+    # Use `patch --fuzz` rather than `git apply` because the PR was written
+    # against an older Flutter revision and context lines may have shifted.
     cp "$HERE/config/gclient-glibc" "$ROOT/.gclient"
     echo "=== apply DEPS hunk (fetch arm64 host clang) ==="
-    git apply --include=DEPS "$HERE/patches/linux-arm64-aot.patch"
+    patch -p1 --fuzz=3 --forward < "$HERE/patches/linux-arm64-aot-deps.patch"
     echo "=== gclient sync (unpatched engine) ==="
     gclient sync --no-history -v
     echo "=== apply remaining #187591 engine patches ==="
-    git apply --exclude=DEPS "$HERE/patches/linux-arm64-aot.patch"
+    patch -p1 --fuzz=3 --forward < "$HERE/patches/linux-arm64-aot-engine.patch"
     ;;
 
   *)

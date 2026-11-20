@@ -1,0 +1,115 @@
+diff --git a/engine/src/build/config/BUILDCONFIG.gn b/engine/src/build/config/BUILDCONFIG.gn
+index 7dcba5339c247..d7b007ba51066 100644
+--- a/engine/src/build/config/BUILDCONFIG.gn
++++ b/engine/src/build/config/BUILDCONFIG.gn
+@@ -148,6 +148,13 @@ declare_args() {
+   is_clang = current_os == "mac" || current_os == "ios" ||
+              current_os == "linux" || current_os == "chromeos"
+ 
++  # CPU arch of the build machine itself -- the CPU that build-time toolchain
++  # binaries (clang, dart) actually execute on. Equals host_cpu in the normal
++  # case; diverges only when cross-compiling a host binary (e.g. linux-arm64
++  # gen_snapshot on a linux-x64 builder), where host_cpu describes the produced
++  # binary's runtime arch and builder_cpu describes the build machine's arch.
++  builder_cpu = host_cpu
++
+   # Compile for Address Sanitizer to find memory bugs.
+   is_asan = false
+ 
+diff --git a/engine/src/build/toolchain/linux/BUILD.gn b/engine/src/build/toolchain/linux/BUILD.gn
+index b6db422f179cb..e812515efe331 100644
+--- a/engine/src/build/toolchain/linux/BUILD.gn
++++ b/engine/src/build/toolchain/linux/BUILD.gn
+@@ -33,7 +33,7 @@ if (use_rbe) {
+   link_prefix = ""
+ }
+ 
+-if (host_cpu == "arm64") {
++if (builder_cpu == "arm64") {
+   rebased_clang_dir =
+       rebase_path("$buildtools_path/linux-arm64/clang/bin", root_build_dir)
+ } else {
+diff --git a/engine/src/flutter/common/config.gni b/engine/src/flutter/common/config.gni
+index 318d305bd37fc..b83dcb54880c2 100644
+--- a/engine/src/flutter/common/config.gni
++++ b/engine/src/flutter/common/config.gni
+@@ -118,7 +118,7 @@ if (_host_os_name == "mac") {
+ # When building 32-bit Android development artifacts for Windows host (like
+ # gen_snapshot), the host_cpu is set to x86. However, the correct prebuilt
+ # Dart SDK to use during this build is still the 64-bit one.
+-_host_cpu = host_cpu
++_host_cpu = builder_cpu
+ if (host_os == "win" && host_cpu == "x86") {
+   _host_cpu = "x64"
+ }
+diff --git a/engine/src/flutter/shell/platform/android/BUILD.gn b/engine/src/flutter/shell/platform/android/BUILD.gn
+index 42bcbaa678a03..421e3fd9fdd87 100644
+--- a/engine/src/flutter/shell/platform/android/BUILD.gn
++++ b/engine/src/flutter/shell/platform/android/BUILD.gn
+@@ -789,7 +789,7 @@ if (target_cpu != "x86") {
+     }
+ 
+     if (host_os == "linux") {
+-      output = "$android_zip_archive_dir/linux-x64.zip"
++      output = "$android_zip_archive_dir/linux-$host_cpu.zip"
+     } else if (host_os == "mac") {
+       output = "$android_zip_archive_dir/darwin-x64.zip"
+     } else if (host_os == "win") {
+@@ -803,7 +803,7 @@ if (target_cpu != "x86") {
+       },
+     ]
+ 
+-    deps = [ "//flutter/lib/snapshot:generate_snapshot_bins" ]
++    deps = [ "$dart_src/runtime/bin:gen_snapshot($host_toolchain)" ]
+ 
+     if (host_os == "mac") {
+       deps += [ ":android_entitlement_config" ]
+@@ -830,7 +830,7 @@ if (host_os == "linux" &&
+     analyze_snapshot_path = "$analyze_snapshot_out_dir/$analyze_snapshot_bin"
+ 
+     if (host_os == "linux") {
+-      output = "$android_zip_archive_dir/analyze-snapshot-linux-x64.zip"
++      output = "$android_zip_archive_dir/analyze-snapshot-linux-$host_cpu.zip"
+     } else if (host_os == "mac") {
+       output = "$android_zip_archive_dir/analyze-snapshot-darwin-x64.zip"
+     } else if (host_os == "win") {
+diff --git a/engine/src/flutter/tools/gn b/engine/src/flutter/tools/gn
+index 50295c32f4b29..2756c9c6d1a41 100755
+--- a/engine/src/flutter/tools/gn
++++ b/engine/src/flutter/tools/gn
+@@ -520,16 +520,19 @@ def to_gn_args(args):
+     gn_args['enable_lto'] = enable_lto
+ 
+   # Set OS, CPU arch for host or target build.
++  gn_args['host_cpu'] = args.host_cpu or get_host_cpu()
++  gn_args['target_cpu'] = get_target_cpu(args)
++  gn_args['dart_target_arch'] = gn_args['target_cpu']
+   if is_host_build(args):
+     gn_args['host_os'] = get_host_os()
+-    gn_args['host_cpu'] = get_host_cpu()
+     gn_args['target_os'] = gn_args['host_os']
+-    gn_args['target_cpu'] = get_target_cpu(args)
+-    gn_args['dart_target_arch'] = gn_args['target_cpu']
+   else:
+     gn_args['target_os'] = args.target_os
+-    gn_args['target_cpu'] = get_target_cpu(args)
+-    gn_args['dart_target_arch'] = gn_args['target_cpu']
++
++  # Cross-compiling host binaries: clang toolchain + build-time Dart SDK must
++  # match the build machine, not the (overridden) target host_cpu.
++  if args.host_cpu and args.host_cpu != get_host_cpu():
++    gn_args['builder_cpu'] = get_host_cpu()
+ 
+   if not args.build_engine_artifacts:
+     gn_args['flutter_build_engine_artifacts'] = False
+@@ -984,6 +987,10 @@ def parse_args(args):
+   parser.add_argument('--windows', dest='target_os', action='store_const', const='win')
+ 
+   parser.add_argument('--linux-cpu', type=str, choices=['x64', 'x86', 'arm64', 'arm'])
++  parser.add_argument('--host-cpu', type=str, choices=['x64', 'arm64'],
++      help='Override the auto-detected host CPU. Use to cross-compile '
++           'host binaries (e.g., gen_snapshot for linux-arm64 from a '
++           'linux-x64 builder).')
+   parser.add_argument('--fuchsia-cpu', type=str, choices=['x64', 'arm64'], default='x64')
+   parser.add_argument('--windows-cpu', type=str, choices=['x64', 'arm64', 'x86'], default='x64')
+   parser.add_argument('--simulator-cpu', type=str, choices=['x64', 'arm64'], default='x64')

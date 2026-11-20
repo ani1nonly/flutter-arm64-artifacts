@@ -62,6 +62,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-linux-${{ hashFiles('requirements.txt') }}
+          save-always: true
 
       - name: Install host dependencies
         run: |
@@ -76,6 +77,7 @@ jobs:
         with:
           path: ~/depot_tools
           key: depot-tools-v1
+          save-always: true
 
       - name: Set up depot_tools (cache miss)
         if: steps.cache-depot.outputs.cache-hit != 'true'
@@ -90,6 +92,7 @@ jobs:
         with:
           path: flutter-src
           key: flutter-src-bionic-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient', 'patches/engine.patch', 'patches/dart.patch', 'patches/skia.patch') }}
+          save-always: true
 
       - name: Checkout Flutter + engine — cache miss
         if: steps.cache-src.outputs.cache-hit != 'true'
@@ -115,10 +118,11 @@ jobs:
         with:
           path: sysroot
           key: sysroot-${{ hashFiles('scripts/sysroot.py', 'build.toml') }}-v1
+          save-always: true
 
       - name: Assemble Termux sysroot — cache miss
         if: steps.cache-sysroot.outputs.cache-hit != 'true'
-        run: python3 scripts/sysroot.py arm64
+        run: python3 scripts/sysroot.py --arch=arm64
 
       - name: Build Android-target gen_snapshot (bionic, arm64)
         run: |
@@ -150,6 +154,7 @@ jobs:
         with:
           path: ~/.cache/pip
           key: pip-linux-${{ hashFiles('requirements.txt') }}
+          save-always: true
 
       - name: Install host dependencies
         run: |
@@ -164,6 +169,7 @@ jobs:
         with:
           path: ~/depot_tools
           key: depot-tools-v1
+          save-always: true
 
       - name: Set up depot_tools (cache miss)
         if: steps.cache-depot.outputs.cache-hit != 'true'
@@ -177,7 +183,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: flutter-src
-          key: flutter-src-glibc-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient-glibc', 'patches/linux-arm64-aot.patch') }}
+          key: flutter-src-glibc-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient-glibc', 'patches/linux-arm64-aot-deps.patch', 'patches/linux-arm64-aot-engine.patch') }}
+          save-always: true
 
       - name: Checkout Flutter + engine — cache miss
         if: steps.cache-src.outputs.cache-hit != 'true'
