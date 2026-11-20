@@ -104,6 +104,8 @@ cd your-app && flutter clean && flutter build apk --release --target-platform an
 EOF
 
 tar -czf "$ARCHIVE" -C "$STAGE" .
-sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+# Write the checksum with a relative (basename) path so the installer's
+# `sha256sum -c` works after downloading both files into one cache dir.
+(cd "$OUT" && sha256sum "$(basename "$ARCHIVE")" > "$(basename "$ARCHIVE").sha256")
 echo "packaged: $ARCHIVE"
 ls -lh "$ARCHIVE" "$ARCHIVE.sha256"
