@@ -57,12 +57,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Python packages
-        uses: actions/cache@v4
+      - name: Restore pip cache
+        id: cache-pip
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/pip
           key: pip-linux-${{ hashFiles('requirements.txt') }}
-          save-always: true
 
       - name: Install host dependencies
         run: |
@@ -71,28 +71,40 @@ jobs:
             pkg-config wget xz-utils apktool openjdk-21-jdk-headless
           pip3 install -r requirements.txt
 
-      - name: Cache depot_tools
+      - name: Save pip cache
+        if: always() && steps.cache-pip.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-linux-${{ hashFiles('requirements.txt') }}
+
+      - name: Restore depot_tools cache
         id: cache-depot
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/depot_tools
           key: depot-tools-v1
-          save-always: true
 
       - name: Set up depot_tools (cache miss)
         if: steps.cache-depot.outputs.cache-hit != 'true'
         run: git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
 
+      - name: Save depot_tools cache
+        if: always() && steps.cache-depot.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/depot_tools
+          key: depot-tools-v1
+
       - name: Add depot_tools to PATH
         run: echo "$HOME/depot_tools" >> "$GITHUB_PATH"
 
-      - name: Cache Flutter + engine checkout (bionic)
+      - name: Restore Flutter checkout (bionic)
         id: cache-src
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: flutter-src
           key: flutter-src-bionic-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient', 'patches/engine.patch', 'patches/dart.patch', 'patches/skia.patch') }}
-          save-always: true
 
       - name: Checkout Flutter + engine — cache miss
         if: steps.cache-src.outputs.cache-hit != 'true'
@@ -101,6 +113,13 @@ jobs:
       - name: Verify restored checkout — cache hit
         if: steps.cache-src.outputs.cache-hit == 'true'
         run: bash scripts/verify-sync.sh "${{ needs.detect.outputs.tag }}" bionic
+
+      - name: Save Flutter checkout cache (bionic)
+        if: always() && steps.cache-src.outputs.cache-hit != 'true' && hashFiles('flutter-src/bin/internal/engine.version') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: flutter-src
+          key: flutter-src-bionic-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient', 'patches/engine.patch', 'patches/dart.patch', 'patches/skia.patch') }}
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -112,17 +131,23 @@ jobs:
             flutter-src/engine/src/.git/rebase-apply/**
           if-no-files-found: ignore
 
-      - name: Cache Termux sysroot
+      - name: Restore Termux sysroot cache
         id: cache-sysroot
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: sysroot
           key: sysroot-${{ hashFiles('scripts/sysroot.py', 'build.toml') }}-v1
-          save-always: true
 
       - name: Assemble Termux sysroot — cache miss
         if: steps.cache-sysroot.outputs.cache-hit != 'true'
         run: python3 scripts/sysroot.py --arch=arm64
+
+      - name: Save Termux sysroot cache
+        if: always() && steps.cache-sysroot.outputs.cache-hit != 'true' && hashFiles('sysroot/usr/**') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: sysroot
+          key: sysroot-${{ hashFiles('scripts/sysroot.py', 'build.toml') }}-v1
 
       - name: Build Android-target gen_snapshot (bionic, arm64)
         run: |
@@ -149,12 +174,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Python packages
-        uses: actions/cache@v4
+      - name: Restore pip cache
+        id: cache-pip
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/pip
           key: pip-linux-${{ hashFiles('requirements.txt') }}
-          save-always: true
 
       - name: Install host dependencies
         run: |
@@ -163,28 +188,40 @@ jobs:
             pkg-config wget xz-utils openjdk-21-jdk-headless
           pip3 install -r requirements.txt
 
-      - name: Cache depot_tools
+      - name: Save pip cache
+        if: always() && steps.cache-pip.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-linux-${{ hashFiles('requirements.txt') }}
+
+      - name: Restore depot_tools cache
         id: cache-depot
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/depot_tools
           key: depot-tools-v1
-          save-always: true
 
       - name: Set up depot_tools (cache miss)
         if: steps.cache-depot.outputs.cache-hit != 'true'
         run: git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
 
+      - name: Save depot_tools cache
+        if: always() && steps.cache-depot.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/depot_tools
+          key: depot-tools-v1
+
       - name: Add depot_tools to PATH
         run: echo "$HOME/depot_tools" >> "$GITHUB_PATH"
 
-      - name: Cache Flutter + engine checkout (glibc)
+      - name: Restore Flutter checkout (glibc)
         id: cache-src
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: flutter-src
           key: flutter-src-glibc-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient-glibc', 'patches/linux-arm64-aot-deps.patch', 'patches/linux-arm64-aot-engine.patch') }}
-          save-always: true
 
       - name: Checkout Flutter + engine — cache miss
         if: steps.cache-src.outputs.cache-hit != 'true'
@@ -193,6 +230,13 @@ jobs:
       - name: Verify restored checkout — cache hit
         if: steps.cache-src.outputs.cache-hit == 'true'
         run: bash scripts/verify-sync.sh "${{ needs.detect.outputs.tag }}" glibc
+
+      - name: Save Flutter checkout cache (glibc)
+        if: always() && steps.cache-src.outputs.cache-hit != 'true' && hashFiles('flutter-src/bin/internal/engine.version') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: flutter-src
+          key: flutter-src-glibc-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient-glibc', 'patches/linux-arm64-aot-deps.patch', 'patches/linux-arm64-aot-engine.patch') }}
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -204,9 +248,27 @@ jobs:
             flutter-src/engine/src/.git/rebase-apply/**
           if-no-files-found: ignore
 
+      - name: Restore aarch64 Debian sysroot cache
+        id: cache-glibc-sysroot
+        uses: actions/cache/restore@v4
+        with:
+          path: flutter-src/engine/src/build/linux/debian_bullseye_arm64-sysroot
+          key: glibc-sysroot-arm64-v1
+
+      - name: Install aarch64 Debian sysroot — cache miss
+        if: steps.cache-glibc-sysroot.outputs.cache-hit != 'true'
+        run: |
+          cd flutter-src/engine/src
+          python3 build/linux/sysroot_scripts/install-sysroot.py --arch=arm64
+
+      - name: Save aarch64 Debian sysroot cache
+        if: always() && steps.cache-glibc-sysroot.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: flutter-src/engine/src/build/linux/debian_bullseye_arm64-sysroot
+          key: glibc-sysroot-arm64-v1
+
       - name: Build Android-target gen_snapshot (glibc, arm64)
-        # Cross-compile from x64 to aarch64 via patches/linux-arm64-aot.patch
-        # (derived from upstream flutter/flutter#187591).
         run: |
           for mode in release profile; do
             bash scripts/build-one.sh glibc arm64 "$mode"

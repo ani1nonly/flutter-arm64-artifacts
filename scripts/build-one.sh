@@ -8,14 +8,14 @@ ARCH="${2:-arm64}"
 MODE="${3:-release}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$REPO/flutter-src"
-OUT="$ROOT/engine/src/out/android_${LIBC}_${MODE}_${ARCH}"
+OUT="$ROOT/engine/src/out/android_${MODE}_${ARCH}"
 
 echo "=== building $LIBC gen_snapshot: arch=$ARCH mode=$MODE ==="
 echo "    flutter checkout: $ROOT"
 echo "    ninja out dir   : $OUT"
 
-# flutter/tools/gn must run from the Flutter checkout root; it resolves
-# --out-dir relative to engine/src/out.
+# flutter/tools/gn must run from the Flutter checkout root; the default out
+# dir is engine/src/out/<target-dir> (e.g. out/android_release_arm64).
 cd "$ROOT"
 export PATH="$HOME/depot_tools:$PATH"
 
@@ -33,7 +33,6 @@ case "$LIBC" in
       --no-prebuilt-dart-sdk \
       --target-toolchain "$TOOLCHAIN" \
       --runtime-mode "$MODE" \
-      --out-dir "android_${LIBC}_${MODE}_${ARCH}" \
       --gn-args symbol_level=0 \
       --gn-args is_termux=true \
       --gn-args is_termux_host=false \
@@ -55,7 +54,6 @@ case "$LIBC" in
       --no-enable-unittests --no-build-embedder-examples \
       --no-prebuilt-dart-sdk \
       --runtime-mode "$MODE" \
-      --out-dir "android_${LIBC}_${MODE}_${ARCH}"
 
     ninja -C "$OUT" flutter/third_party/dart/runtime/bin:gen_snapshot -j"$(nproc)"
     ;;
