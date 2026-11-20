@@ -54,7 +54,7 @@ jobs:
 
   build-bionic:
     needs: detect
-    if: needs.detect.outputs.changed == 'true' && (inputs.mode == 'both' || inputs.mode == 'bionic')
+    if: needs.detect.outputs.changed == 'true' && (inputs.mode == '' || inputs.mode == 'both' || inputs.mode == 'bionic')
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -108,7 +108,7 @@ jobs:
 
   build-glibc:
     needs: detect
-    if: needs.detect.outputs.changed == 'true' && (inputs.mode == 'both' || inputs.mode == 'glibc')
+    if: needs.detect.outputs.changed == 'true' && (inputs.mode == '' || inputs.mode == 'both' || inputs.mode == 'glibc')
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
