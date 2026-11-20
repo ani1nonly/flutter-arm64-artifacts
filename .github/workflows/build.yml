@@ -342,9 +342,14 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ needs.detect.outputs.tag }}"
-          gh release create "$TAG" dist/*/* \
-            --title "Flutter $TAG linux-arm64 host artifacts" \
-            --generate-notes \
-            --prerelease
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refreshing assets in place."
+            gh release upload "$TAG" dist/*/* --clobber
+          else
+            gh release create "$TAG" dist/*/* \
+              --title "Flutter $TAG linux-arm64 host artifacts" \
+              --generate-notes \
+              --prerelease
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
