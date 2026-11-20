@@ -28,18 +28,18 @@ case "$LIBC" in
     # assembles Termux packages, it does not download an NDK.
     SYSROOT="$REPO/sysroot"
     # The runner sets ANDROID_NDK_HOME but the deployed image has occasionally
-    # lacked the actual NDK files. Search every plausible location, verify a
-    # real clang++ exists, and install via sdkmanager as a last resort.
-    find_ndk() {
+    # lacked the NDK files, and the prebuilt host dir is linux-x86_64 on some
+    # images (not linux-x64). Find the actual toolchain dir rather than
+    # guessing; install via sdkmanager only as a last resort.
+    find_toolchain() {
         local candidate clangxx
         for candidate in \
             "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK:-}" "${ANDROID_NDK_LATEST_HOME:-}" \
             "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"/ndk/* \
             "${ANDROID_HOME:-}"/ndk/* "$HOME/android-sdk/ndk/"*; do
             [ -n "$candidate" ] && [ -d "$candidate" ] || continue
-            # Locate clang++ at any prebuilt/<host>/bin depth -- NDK layouts
-            # differ between runner image versions.
-            clangxx=$(find "$candidate" -name clang++ -path '*/prebuilt/*/bin/*' -print -quit 2>/dev/null || true)
+            clangxx=$(find "$candidate" -name clang++ \
+                -path '*/toolchains/llvm/prebuilt/*/bin/clang++' -print -quit 2>/dev/null || true)
             if [ -n "$clangxx" ] && [ -x "$clangxx" ]; then
                 dirname "$(dirname "$clangxx")"
                 return 0
@@ -47,16 +47,16 @@ case "$LIBC" in
         done
         return 1
     }
-    NDK_HOME=$(find_ndk || true)
-    if [ -z "$NDK_HOME" ]; then
+    TOOLCHAIN=$(find_toolchain || true)
+    if [ -z "$TOOLCHAIN" ]; then
         echo "WARN: preinstalled NDK missing; installing via sdkmanager ..." >&2
         SDKM="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}/cmdline-tools/latest/bin/sdkmanager"
         if [ -x "$SDKM" ]; then
             yes | "$SDKM" --install "ndk;27.3.13750724" >&2 || true
-            NDK_HOME=$(find_ndk || true)
+            TOOLCHAIN=$(find_toolchain || true)
         fi
     fi
-    if [ -z "$NDK_HOME" ]; then
+    if [ -z "$TOOLCHAIN" ]; then
         echo "ERROR: no usable Android NDK. Diagnostics:" >&2
         echo "  ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-unset}" >&2
         ls -la "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/ndk" 2>&1 | head -20 >&2 || true
@@ -64,7 +64,6 @@ case "$LIBC" in
         find /usr/local/lib/android/sdk/ndk -maxdepth 3 -type d 2>/dev/null | head -40 >&2 || true
         exit 1
     fi
-    TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x64"
     echo "    NDK toolchain: $TOOLCHAIN"
     API=26
 
