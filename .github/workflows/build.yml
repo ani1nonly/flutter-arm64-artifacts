@@ -60,6 +60,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ---------- Cached toolchain setup ----------
+      - name: Cache Python packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-linux-${{ hashFiles('requirements.txt') }}
+
       - name: Install host dependencies
         run: |
           sudo apt-get update
@@ -67,13 +74,36 @@ jobs:
             pkg-config wget xz-utils apktool openjdk-21-jdk-headless
           pip3 install -r requirements.txt
 
-      - name: Set up depot_tools
-        run: |
-          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
-          echo "$HOME/depot_tools" >> "$GITHUB_PATH"
+      - name: Cache depot_tools
+        id: cache-depot
+        uses: actions/cache@v4
+        with:
+          path: ~/depot_tools
+          key: depot-tools-v1
 
-      - name: Checkout Flutter + engine (gclient)
+      - name: Set up depot_tools (cache miss)
+        if: steps.cache-depot.outputs.cache-hit != 'true'
+        run: git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
+
+      - name: Add depot_tools to PATH
+        run: echo "$HOME/depot_tools" >> "$GITHUB_PATH"
+
+      # Biggest win: the engine checkout is ~5 GB and takes 10-20 min.
+      # Key includes the patch hash so any patch change forces a fresh sync.
+      - name: Cache Flutter + engine checkout
+        id: cache-src
+        uses: actions/cache@v4
+        with:
+          path: flutter-src
+          key: flutter-src-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient', 'patches/*.patch') }}
+
+      - name: Checkout Flutter + engine (gclient) — cache miss
+        if: steps.cache-src.outputs.cache-hit != 'true'
         run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}"
+
+      - name: Verify restored checkout — cache hit
+        if: steps.cache-src.outputs.cache-hit == 'true'
+        run: bash scripts/verify-sync.sh "${{ needs.detect.outputs.tag }}"
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -86,9 +116,18 @@ jobs:
             flutter-src/engine/src/.git/rebase-apply/**
           if-no-files-found: ignore
 
-      - name: Assemble Termux sysroot
+      - name: Cache Termux sysroot
+        id: cache-sysroot
+        uses: actions/cache@v4
+        with:
+          path: sysroot
+          key: sysroot-${{ hashFiles('scripts/sysroot.py') }}-v1
+
+      - name: Assemble Termux sysroot — cache miss
+        if: steps.cache-sysroot.outputs.cache-hit != 'true'
         run: python3 scripts/sysroot.py sync
 
+      # ---------- Build ----------
       - name: Build Android-target gen_snapshot (bionic, arm64)
         run: |
           for mode in release profile; do
@@ -114,6 +153,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ---------- Cached toolchain setup ----------
+      - name: Cache Python packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-linux-${{ hashFiles('requirements.txt') }}
+
       - name: Install host dependencies
         run: |
           sudo apt-get update
@@ -121,13 +167,34 @@ jobs:
             pkg-config wget xz-utils openjdk-21-jdk-headless
           pip3 install -r requirements.txt
 
-      - name: Set up depot_tools
-        run: |
-          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
-          echo "$HOME/depot_tools" >> "$GITHUB_PATH"
+      - name: Cache depot_tools
+        id: cache-depot
+        uses: actions/cache@v4
+        with:
+          path: ~/depot_tools
+          key: depot-tools-v1
 
-      - name: Checkout Flutter + engine (gclient)
+      - name: Set up depot_tools (cache miss)
+        if: steps.cache-depot.outputs.cache-hit != 'true'
+        run: git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
+
+      - name: Add depot_tools to PATH
+        run: echo "$HOME/depot_tools" >> "$GITHUB_PATH"
+
+      - name: Cache Flutter + engine checkout
+        id: cache-src
+        uses: actions/cache@v4
+        with:
+          path: flutter-src
+          key: flutter-src-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient', 'patches/*.patch') }}
+
+      - name: Checkout Flutter + engine (gclient) — cache miss
+        if: steps.cache-src.outputs.cache-hit != 'true'
         run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}"
+
+      - name: Verify restored checkout — cache hit
+        if: steps.cache-src.outputs.cache-hit == 'true'
+        run: bash scripts/verify-sync.sh "${{ needs.detect.outputs.tag }}"
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -140,6 +207,7 @@ jobs:
             flutter-src/engine/src/.git/rebase-apply/**
           if-no-files-found: ignore
 
+      # ---------- Build ----------
       - name: Build Android-target gen_snapshot (glibc, arm64)
         # Cross-compile from x64 to aarch64 using the approach from upstream
         # PR flutter/flutter#187591 (host_clang_cpu). No arm64 runners needed.

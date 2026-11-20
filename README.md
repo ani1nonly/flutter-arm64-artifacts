@@ -84,6 +84,43 @@ bash install.sh /path/to/flutter
 cd your-app && flutter clean && flutter build apk --release --target-platform android-arm64
 ```
 
+## Setup speed / "preconfigured VM"
+
+GitHub-hosted runners are **fresh VMs on every run**, so a customized VM cannot
+be kept between runs. Instead, this workflow caches the expensive setup:
+
+| Cache | Key | What it saves |
+|---|---|---|
+| `~/.cache/pip` | `requirements.txt` hash | pip downloads |
+| `~/depot_tools` | `depot-tools-v1` | depot_tools clone |
+| `flutter-src` | Flutter tag + patch hash | **~5 GB engine checkout + 10–20 min `gclient sync`** |
+| `sysroot` | `scripts/sysroot.py` hash | Termux sysroot assembly |
+
+On a cache hit, `scripts/verify-sync.sh` confirms the checkout is complete and
+still patched, then skips `gclient sync` entirely. Any patch edit changes the
+cache key and forces a fresh sync automatically.
+
+### Optional: container image (fully preconfigured)
+
+`Dockerfile` bakes apt packages, Python deps, and depot_tools into an image.
+Publish it once to GHCR, then add `container:` to both build jobs and delete
+the "Install host dependencies" / "Set up depot_tools" steps:
+
+```bash
+docker build -t ghcr.io/ani1nonly/flutter-arm64-artifacts:latest .
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u ani1nonly --password-stdin
+docker push ghcr.io/ani1nonly/flutter-arm64-artifacts:latest
+```
+
+```yaml
+    container:
+      image: ghcr.io/ani1nonly/flutter-arm64-artifacts:latest
+```
+
+Note: the container removes ~1 min of apt/pip setup, but `gclient sync` and the
+engine compile (the real cost) are handled by the caches above. A **self-hosted
+runner** is the only way to keep a truly warm machine.
+
 ## Known maintenance burden
 
 - The 3 patches (`engine.patch`, `dart.patch`, `skia.patch`) are **hand-maintained
