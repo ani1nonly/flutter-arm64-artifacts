@@ -31,15 +31,19 @@ case "$LIBC" in
     # lacked the actual NDK files. Search every plausible location, verify a
     # real clang++ exists, and install via sdkmanager as a last resort.
     find_ndk() {
-        local candidate
+        local candidate clangxx
         for candidate in \
             "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK:-}" "${ANDROID_NDK_LATEST_HOME:-}" \
             "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"/ndk/* \
             "${ANDROID_HOME:-}"/ndk/* "$HOME/android-sdk/ndk/"*; do
-            [ -n "$candidate" ] || continue
-            [ -x "$candidate/toolchains/llvm/prebuilt/linux-x64/bin/clang++" ] || continue
-            echo "$candidate"
-            return 0
+            [ -n "$candidate" ] && [ -d "$candidate" ] || continue
+            # Locate clang++ at any prebuilt/<host>/bin depth -- NDK layouts
+            # differ between runner image versions.
+            clangxx=$(find "$candidate" -name clang++ -path '*/prebuilt/*/bin/*' -print -quit 2>/dev/null || true)
+            if [ -n "$clangxx" ] && [ -x "$clangxx" ]; then
+                dirname "$(dirname "$clangxx")"
+                return 0
+            fi
         done
         return 1
     }
@@ -56,7 +60,8 @@ case "$LIBC" in
         echo "ERROR: no usable Android NDK. Diagnostics:" >&2
         echo "  ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-unset}" >&2
         ls -la "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/ndk" 2>&1 | head -20 >&2 || true
-        find /usr/local/lib/android/sdk/ndk -maxdepth 4 -name clang++ 2>/dev/null | head -10 >&2 || true
+        find /usr/local/lib/android/sdk/ndk -name clang++ -print 2>/dev/null | head -10 >&2 || true
+        find /usr/local/lib/android/sdk/ndk -maxdepth 3 -type d 2>/dev/null | head -40 >&2 || true
         exit 1
     fi
     TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x64"
