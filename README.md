@@ -50,6 +50,44 @@ scripts/
 
 Trigger with `workflow_dispatch` to build a specific tag or only one libc.
 
+## When Flutter updates
+
+CI checks for a new Flutter stable tag every Monday (`schedule`) and on pushes
+to `main`. If no GitHub release exists for the newly resolved tag, it builds
+both bionic and glibc artifacts and publishes them automatically. You can also
+dispatch the workflow manually from the Actions tab if you don't want to wait.
+
+On the device, after upgrading Flutter:
+
+```bash
+# If `flutter upgrade` complains about local changes, either:
+flutter upgrade --force
+# or revert our patch first:
+git -C "$FLUTTER_HOME" checkout -- packages/flutter_tools/lib/src/artifacts.dart
+flutter upgrade
+
+# Then (re)install the matching artifacts:
+curl -fsSL https://raw.githubusercontent.com/ani1nonly/flutter-arm64-artifacts/main/install.sh | bash
+
+cd your-app
+flutter clean
+flutter build apk --release --target-platform android-arm64
+```
+
+The installer resolves the newest published release tag, compares it with the
+installed SDK, and (with consent) updates Flutter first if needed. It then
+auto-detects bionic vs glibc, verifies checksums, installs the binaries, and
+re-applies the `artifacts.dart` patch. The patch is intentionally treated as a
+regenerable local modification, so `--force` upgrades are safe.
+
+If a new Flutter tag is installed before CI has published matching artifacts,
+wait for the scheduled run or dispatch the workflow manually. Do not install
+artifacts from an older Flutter tag — engine hashes must match.
+
+If a build fails, the workflow uploads diagnostics as a job artifact; download
+them from the failing run. Patch rebases (`engine.patch`, `dart.patch`,
+`skia.patch`) are usually what a Flutter/engine change requires.
+
 ## Local usage
 
 ```bash

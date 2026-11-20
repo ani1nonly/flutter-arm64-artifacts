@@ -187,6 +187,15 @@ else
                 if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
                     git fetch --depth 1 origin tag "$TAG" || git fetch --depth 1 origin "$TAG"
                 fi
+                # Our artifacts.dart patch is a local modification. Upstream
+                # usually changes that file between releases, which would make
+                # `git checkout` refuse to switch tags. The artifact installer
+                # re-applies the patch after the checkout, so drop it here.
+                A="packages/flutter_tools/lib/src/artifacts.dart"
+                if [ -f "$A" ] && grep -q 'Cortex: Android AOT' "$A"; then
+                    info "reverting local artifacts.dart patch before checkout ..."
+                    git checkout -- "$A" || true
+                fi
                 git checkout --detach "$TAG"
             ) || err "Flutter update failed"
             EXISTING_VER=$(git -C "$EXISTING" describe --tags --exact-match 2>/dev/null || echo "$TAG")
