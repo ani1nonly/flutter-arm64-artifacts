@@ -24,7 +24,7 @@ export PATH="$HOME/depot_tools:$PATH"
 case "$LIBC" in
   bionic)
     # Termux sysroot + NDK clang, cross-compiled from x64 to aarch64 (bionic).
-    SYSROOT="$REPO/sysroot/sysroot"
+    SYSROOT="$REPO/sysroot"
     TOOLCHAIN="$REPO/sysroot/ndk/toolchains/llvm/prebuilt/linux-x64"
     API=26
 

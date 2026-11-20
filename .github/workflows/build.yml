@@ -142,8 +142,15 @@ jobs:
         if: steps.cache-sysroot.outputs.cache-hit != 'true'
         run: python3 scripts/sysroot.py --arch=arm64
 
+      - name: Check Termux sysroot assembled
+        id: sysroot-check
+        run: |
+          if [ -d sysroot/data/data/com.termux/files/usr ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Save Termux sysroot cache
-        if: always() && steps.cache-sysroot.outputs.cache-hit != 'true' && hashFiles('sysroot/usr/**') != ''
+        if: always() && steps.cache-sysroot.outputs.cache-hit != 'true' && steps.sysroot-check.outputs.ok == 'true'
         uses: actions/cache/save@v4
         with:
           path: sysroot
