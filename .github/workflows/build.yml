@@ -1,0 +1,158 @@
+name: Build Flutter linux-arm64 host artifacts
+
+on:
+  schedule:
+    # Weekly canary: detect new Flutter stable and attempt a build.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      flutter_ref:
+        description: 'Flutter git ref (default: latest stable tag)'
+        required: false
+        default: ''
+      mode:
+        description: 'Which libc to build'
+        required: false
+        default: 'both'
+        type: choice
+        options: [both, bionic, glibc]
+
+env:
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      changed: ${{ steps.resolve.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve Flutter stable tag
+        id: resolve
+        run: |
+          set -euo pipefail
+          REF="${{ inputs.flutter_ref }}"
+          if [ -z "$REF" ]; then
+            REF=$(git ls-remote --tags --refs https://github.com/flutter/flutter.git \
+              | awk -F/ '$3 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ {print $3}' \
+              | sort -V | tail -1)
+          fi
+          echo "tag=$REF" >> "$GITHUB_OUTPUT"
+          echo "Resolved Flutter stable: $REF"
+          # Check if we already have a release for this tag.
+          if gh release view "$REF" >/dev/null 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Release $REF already exists — skipping."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-bionic:
+    needs: detect
+    if: needs.detect.outputs.changed == 'true' && (inputs.mode == 'both' || inputs.mode == 'bionic')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl python3 python3-pip ninja-build \
+            pkg-config wget xz-utils apktool openjdk-21-jdk-headless
+          pip3 install -r requirements.txt
+
+      - name: Set up depot_tools
+        run: |
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
+          echo "$HOME/depot_tools" >> "$GITHUB_PATH"
+
+      - name: Checkout Flutter + engine (gclient)
+        run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}"
+
+      - name: Assemble Termux sysroot
+        run: python3 scripts/sysroot.py sync
+
+      - name: Build Android-target gen_snapshot (bionic, arm64)
+        run: |
+          for mode in release profile; do
+            bash scripts/build-one.sh bionic arm64 "$mode"
+          done
+
+      - name: Verify binaries
+        run: bash scripts/verify-artifacts.sh bionic
+
+      - name: Package
+        run: bash scripts/package-artifacts.sh bionic "${{ needs.detect.outputs.tag }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bionic-${{ needs.detect.outputs.tag }}
+          path: dist/bionic/*.tar.gz
+
+  build-glibc:
+    needs: detect
+    if: needs.detect.outputs.changed == 'true' && (inputs.mode == 'both' || inputs.mode == 'glibc')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl python3 python3-pip ninja-build \
+            pkg-config wget xz-utils openjdk-21-jdk-headless
+          pip3 install -r requirements.txt
+
+      - name: Set up depot_tools
+        run: |
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$HOME/depot_tools"
+          echo "$HOME/depot_tools" >> "$GITHUB_PATH"
+
+      - name: Checkout Flutter + engine (gclient)
+        run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}"
+
+      - name: Build Android-target gen_snapshot (glibc, arm64)
+        # Cross-compile from x64 to aarch64 using the approach from upstream
+        # PR flutter/flutter#187591 (host_clang_cpu). No arm64 runners needed.
+        run: |
+          for mode in release profile; do
+            bash scripts/build-one.sh glibc arm64 "$mode"
+          done
+
+      - name: Verify binaries
+        run: bash scripts/verify-artifacts.sh glibc
+
+      - name: Package
+        run: bash scripts/package-artifacts.sh glibc "${{ needs.detect.outputs.tag }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glibc-${{ needs.detect.outputs.tag }}
+          path: dist/glibc/*.tar.gz
+
+  release:
+    needs: [detect, build-bionic, build-glibc]
+    if: needs.detect.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Publish release
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.detect.outputs.tag }}"
+          gh release create "$TAG" dist/*/* \
+            --title "Flutter $TAG linux-arm64 host artifacts" \
+            --generate-notes \
+            --prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

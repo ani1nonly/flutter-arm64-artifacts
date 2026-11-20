@@ -1,0 +1,32 @@
+# Configuration for flutter-arm64-artifacts.
+# The CI workflow resolves the latest Flutter stable tag dynamically; this
+# file records the defaults and the patch matrix.
+
+[flutter]
+repo = 'https://github.com/flutter/flutter.git'
+channel = 'stable'
+# Tag is resolved by CI (scripts/sync.sh) and written here for reproducibility.
+
+[targets]
+arch = ['arm64']
+android_runtime = ['release', 'profile']
+
+[libc]
+# bionic: Termux/Android host (bionic linker, NDK sysroot).
+# glibc:  Generic aarch64 Linux host (glibc, cross-compiled per PR #187591).
+enabled = ['bionic', 'glibc']
+
+[patches]
+engine = 'patches/engine.patch'
+dart = 'patches/dart.patch'
+skia = 'patches/skia.patch'
+
+[verification]
+require_compressed_pointers = true
+require_android_target = true
+
+[compatibility]
+# Snapshot format must match the Flutter engine version. CI extracts
+# bin/internal/engine.version from the checked-out tag and embeds it in
+# every artifact manifest.
+track_engine_hash = true

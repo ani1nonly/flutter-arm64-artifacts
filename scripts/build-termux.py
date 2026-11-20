@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+
+import os
+import shutil
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+import fire
+import git
+import yaml
+from loguru import logger
+
+import utils
+from package import Package
+from sysroot import Sysroot
+
+
+class GitProgress(git.RemoteProgress):
+    def update(self, op_code, cur_count, max_count=None, message=''):
+        logger.trace(f"cloning {cur_count}/{max_count} {message}")
+
+
+def ndk_vulkan_include(toolchain):
+    # NDK sysroot canonical Vulkan headers (includes vulkan_android.h with
+    # VkAndroidHardwareBufferUsageANDROID and other platform types).
+    return Path(toolchain, 'sysroot', 'usr', 'include')
+
+
+def termux_stubs_dir():
+    # Stub headers for Android platform-internal APIs absent from the NDK
+    # (hardware/hwvulkan.h, vndk/hardware_buffer.h, vulkan/vk_android_native_buffer.h).
+    return Path(__file__).parent / 'stubs'
+
+
+def gn_list(items):
+    quoted = ', '.join(f'"{it}"' for it in items)
+    return f'[{quoted}]'
+
+
+def require_tools(*names):
+    missing = [n for n in names if shutil.which(n) is None]
+    if missing:
+        raise RuntimeError(f'missing required tools: {", ".join(missing)}')
+
+
+@utils.record
+class Build:
+    @utils.recordm
+    def __init__(self, conf='build.toml'):
+        path = Path(__file__).parent
+        conf = path/conf
+
+        with open(conf, 'rb') as f:
+            cfg = tomllib.load(f)
+
+        ndk = cfg['ndk'].get('path') or os.environ.get('ANDROID_NDK')
+        api = cfg['ndk'].get('api')
+        tag = cfg['flutter'].get('tag')
+        repo = cfg['flutter'].get('repo')
+        root = cfg['flutter'].get('path')
+        arch = cfg['build'].get('arch')
+        mode = cfg['build'].get('runtime')
+        gclient = cfg['build'].get('gclient')
+        sysroot_cfg = dict(cfg['sysroot'])
+        syspath = sysroot_cfg.pop('path')
+        package_conf = cfg['package'].get('conf')
+        release = cfg['package'].get('path')
+        pkg_rel = str(cfg['package'].get('pkg_rel') or '').strip()
+        patches = cfg.get('patch')
+
+        if not ndk:
+            raise ValueError('neither ndk path nor ANDROID_NDK is set')
+        if not tag:
+            raise ValueError('require flutter tag')
+
+        self.tag = tag
+        self.pkg_rel = pkg_rel
+        self.package_version = f'{self.tag}-{self.pkg_rel}' if self.pkg_rel else self.tag
+        self.release_tag = self.package_version
+        self.dart_version = cfg['flutter'].get('dart_version') or ''
+        self.framework_revision = cfg['flutter'].get('framework_revision') or ''
+        self.framework_commit_date = cfg['flutter'].get('framework_commit_date') or ''
+        self.devtools_version = cfg['flutter'].get('devtools_version') or ''
+        self.ndk_version = cfg['ndk'].get('version') or ''
+        self.compile_sdk = cfg['android'].get('compile_sdk')
+        self.target_sdk = cfg['android'].get('target_sdk')
+        self.api = api or 26
+        self.conf = conf
+        self.host = 'linux-x86_64'
+        self.repo = repo or 'https://github.com/flutter/flutter'
+        self.arch = arch or 'arm64'
+        self.mode = mode or 'debug'
+        self.android_runtime = cfg['build'].get('android_runtime') or self.mode
+        self.sysroot = Sysroot(path=path/syspath, **sysroot_cfg)
+        self.root = path/root
+        self.gclient = path/gclient
+        if not release:
+            raise ValueError(f'bad release path: "{release}"')
+        self.release = path/release
+        self.toolchain = Path(ndk, f'toolchains/llvm/prebuilt/{self.host}')
+
+        # output() creates the release directory on demand, so a missing
+        # directory is not an error. Reject only a path that resolves to the
+        # repo root (the old `path = '.'` default), which would silently drop
+        # the deb into the source tree.
+        if self.release.resolve() == path.resolve():
+            raise ValueError(f'bad release path: "{release}"')
+
+        with open(path/package_conf, 'rb') as f:
+            self.package = yaml.safe_load(f)
+
+        if isinstance(patches, dict):
+            self.patches = {}
+
+            def patch(key, **kwargs):
+                return self.patch(**{**self.patches[key], **kwargs})
+
+            for k, v in patches.items():
+                self.patches[k] = {
+                    'file': path/v['file'],
+                    'path': self.root/v['path']}
+                self.__dict__[f'patch_{k}'] = lambda k=k, **kw: patch(k, **kw)
+
+    def config(self):
+        info = (f'{k}\t: {v}' for k, v in self.__dict__.items() if k != 'package')
+        logger.info('\n'+'\n'.join(info))
+
+    def clone(self, *, url: str = None, tag: str = None, out: str = None, force: bool = False, depth: int = 1):
+        """Clone the framework at ``tag``.
+
+        ``depth=1`` keeps only the tagged commit: the full history adds ~490 MiB
+        of ``.git`` to the packaged SDK. ``flutter`` only needs a git clone so
+        ``git rev-parse HEAD`` resolves (bin/internal/shared.sh), and the tag
+        itself, for ``git describe --tags``. Pass ``--depth=0`` for full history.
+        """
+        url = url or self.repo
+        out = out or self.root
+        tag = tag or self.tag
+        progress = GitProgress()
+
+        if utils.flutter_tag(out) == tag and not force:
+            logger.info('flutter exists, skip.')
+            return
+        elif os.path.isdir(out):
+            import datetime
+            stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+            backup = f'{out}.old.{stamp}'
+            logger.info(f'moving {out} to {backup} ...')
+            os.rename(out, backup)
+
+        try:
+            git.Repo.clone_from(
+                url=url,
+                to_path=out,
+                progress=progress,
+                branch=tag,
+                **(dict(depth=depth, single_branch=True) if depth else {}))
+        except git.exc.GitCommandError:
+            raise RuntimeError('\n'.join(progress.error_lines))
+
+    def sync(self, *, cfg: str = None, root: str = None):
+        require_tools('gclient')
+        cfg = cfg or self.gclient
+        src = root or self.root
+
+        shutil.copy(cfg, os.path.join(src, '.gclient'))
+        cmd = ['gclient', 'sync', '-DR', '--no-history']
+        logger.info(f'running: {" ".join(cmd)} (cwd={src})')
+        subprocess.run(cmd, cwd=src, check=True)
+
+    def patch(self, *, file, path):
+        repo = git.Repo(path)
+        repo.git.apply([file])
+
+    def _termux_gn_args(self, api, sysroot, toolchain):
+        """GN args shared by the Linux and Android engine configurations.
+
+        Both targets compile with the Termux toolchain (aarch64 Bionic, via
+        ``--target=aarch64-linux-android<api>``) so their host binaries run on
+        Termux. The args are identical for the two configurations; only the
+        ``--linux``/``--android`` target selector in ``gn`` differs.
+        """
+        vulkan = ndk_vulkan_include(toolchain)
+        stubs = termux_stubs_dir()
+        return [
+            '--gn-args', 'symbol_level=0',
+            '--gn-args', 'arm_use_neon=false',
+            '--gn-args', 'arm_optionally_use_neon=true',
+            '--gn-args', 'dart_include_wasm_opt=false',
+            '--gn-args', 'dart_platform_sdk=false',
+            '--gn-args', 'is_desktop_linux=false',
+            '--gn-args', 'use_default_linux_sysroot=false',
+            '--gn-args', 'skia_use_perfetto=false',
+            '--gn-args', f'custom_sysroot="{sysroot}"',
+            '--gn-args', 'is_termux=true',
+            '--gn-args', f'is_termux_host={utils.__TERMUX__}',
+            '--gn-args', f'termux_api_level={api}',
+            '--gn-args', 'extra_ldflags=["-lEGL", "-lGLESv2", "-llog"]',
+            # Provide stub headers for Android platform-internal APIs that are
+            # not part of the public NDK (e.g. vk_android_native_buffer.h,
+            # hardware/hwvulkan.h, vndk/hardware_buffer.h).
+            # -D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__: NDK headers guard
+            #   API-level-gated functions with __BIONIC_AVAILABILITY(strict,...).
+            #   Defining this macro before any NDK headers are included changes
+            #   the mode from "hard error" to "weak import", allowing SwiftShader
+            #   to call API-29 functions (e.g. AHardwareBuffer_lockPlanes) even
+            #   when targeting API 26.  Termux runs on Android where these
+            #   symbols are present, so the weak-import behaviour is correct.
+            # -Wno-newline-eof: suppress warning on third-party headers
+            #   (SwiftShader) that legitimately lack a trailing newline.
+            '--gn-args',
+            f'extra_cflags={gn_list([f"-I{vulkan}", f"-I{stubs}", "-D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__"])}',
+            '--gn-args',
+            f'extra_cflags_cc={gn_list([f"-I{vulkan}", f"-I{stubs}", "-D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__", "-Wno-newline-eof"])}',
+        ]
+
+    def configure(
+        self,
+        arch: str,
+        mode: str,
+        api: int = None,
+        root: str = None,
+        sysroot: str = None,
+        toolchain: str = None,
+        lto: bool = None,
+    ):
+        root = root or self.root
+        api = api or self.api
+        sysroot = os.path.abspath(sysroot or self.sysroot.path)
+        toolchain = os.path.abspath(toolchain or self.toolchain)
+        # ThinLTO in the debug runtime mode only buys build time: that engine
+        # serves `flutter run -d linux`, while release and profile ship to
+        # users. `build.py configure --lto=true` overrides the default.
+        lto = (mode != 'debug') if lto is None else lto
+        cmd = [
+            'vpython3',
+            'engine/src/flutter/tools/gn',
+            '--linux',
+            '--linux-cpu', arch,
+            '--enable-fontconfig',
+            '--no-goma',
+            '--no-backtrace',
+            '--clang',
+            '--lto' if lto else '--no-lto',
+            '--no-enable-unittests',
+            '--no-build-embedder-examples',
+            '--no-prebuilt-dart-sdk',
+            '--target-toolchain', toolchain,
+            '--runtime-mode', mode,
+            '--no-build-glfw-shell',
+            *self._termux_gn_args(api, sysroot, toolchain),
+        ]
+        logger.info(f'running gn configure: arch={arch} mode={mode}')
+        subprocess.run(cmd, cwd=root, check=True)
+
+    def configure_android(
+        self,
+        arch: str,
+        mode: str,
+        api: int = None,
+        root: str = None,
+        sysroot: str = None,
+        toolchain: str = None,
+    ):
+        """Configure an Android-target engine build for the ``gen_snapshot`` tool.
+
+        The Linux desktop engine's gen_snapshot produces AOT snapshots the
+        Android runtime VM rejects (``target_os=linux``, no compressed
+        pointers). ``flutter build apk --release/--profile`` therefore needs a
+        gen_snapshot built with ``target_os=android`` and compressed pointers,
+        which ``--android`` provides. Only the gen_snapshot binary is built
+        from this configuration (see :meth:`build_android`); the Android
+        embedding itself is published separately.
+        """
+        root = root or self.root
+        api = api or self.api
+        sysroot = os.path.abspath(sysroot or self.sysroot.path)
+        toolchain = os.path.abspath(toolchain or self.toolchain)
+        cmd = [
+            'vpython3',
+            'engine/src/flutter/tools/gn',
+            '--android',
+            '--android-cpu', arch,
+            '--no-goma',
+            '--no-backtrace',
+            '--clang',
+            '--lto',
+            '--no-enable-unittests',
+            '--no-build-embedder-examples',
+            '--no-prebuilt-dart-sdk',
+            '--target-toolchain', toolchain,
+            '--runtime-mode', mode,
+            *self._termux_gn_args(api, sysroot, toolchain),
+        ]
+        logger.info(f'running gn configure (android): arch={arch} mode={mode}')
+        subprocess.run(cmd, cwd=root, check=True)
+
+    def build(self, arch: str, mode: str, root: str = None, jobs: int = None):
+        require_tools('ninja')
+        root = root or self.root
+        cmd = [
+            'ninja', '-C', utils.target_output(root, arch, mode),
+            'flutter',
+            'flutter/build/archives:artifacts',
+            'flutter/build/archives:dart_sdk_archive',
+            'flutter/build/archives:flutter_patched_sdk',
+            'flutter/shell/platform/linux:flutter_gtk',
+            'flutter/tools/font_subset',
+        ]
+        if jobs:
+            cmd.append(f'-j{jobs}')
+        logger.info(f'running: {" ".join(cmd)}')
+        subprocess.run(cmd, check=True)
+
+    def build_android(self, arch: str, mode: str, root: str = None, jobs: int = None):
+        """Build only the Android-target gen_snapshot from an ``--android`` build.
+
+        ``flutter build apk --release/--profile`` AOT-compiles Dart with a
+        gen_snapshot whose VM matches the Android embedding (compressed
+        pointers, ``target_os=android``). The Linux desktop gen_snapshot cannot
+        be reused, so this target is built separately and shipped under
+        ``artifacts/engine/linux-arm64-android-{mode}/``.
+        """
+        require_tools('ninja')
+        root = root or self.root
+        cmd = [
+            'ninja', '-C', utils.android_target_output(root, arch, mode),
+            'flutter/third_party/dart/runtime/bin:gen_snapshot',
+        ]
+        if jobs:
+            cmd.append(f'-j{jobs}')
+        logger.info(f'running (android gen_snapshot): {" ".join(cmd)}')
+        subprocess.run(cmd, check=True)
+
+    def debuild(self, arch: str, output: str = None, root: str = None, **conf):
+        conf = {**(conf or self.package), 'root': root or self.root, 'arch': arch}
+        output = output or self.output(arch)
+
+        pkg = Package(**conf, **self.metadata())
+        pkg.debuild(output=output)
+
+    def output(self, arch: str):
+        self.release.mkdir(parents=True, exist_ok=True)
+        name = f'flutter_{self.package_version}_{utils.termux_arch(arch)}.deb'
+        return self.release/name
+
+    def metadata(self):
+        """Bundled release metadata passed to :class:`Package`.
+
+        Keys are byte-identical to the values previously splatted at the
+        ``debuild`` call site.
+        """
+        return {
+            'dart_version': self.dart_version,
+            'framework_revision': self.framework_revision,
+            'framework_commit_date': self.framework_commit_date,
+            'devtools_version': self.devtools_version,
+            'ndk_version': self.ndk_version,
+            'compile_sdk': self.compile_sdk,
+            'target_sdk': self.target_sdk,
+            'package_version': self.package_version,
+        }
+
+    def __call__(self):
+        self.config()
+        self.clone()
+        self.sync()
+
+        for arch in self.arch:
+            self.sysroot(arch=arch)
+            for mode in self.mode:
+                self.configure(arch=arch, mode=mode)
+                self.build(arch=arch, mode=mode)
+            for mode in self.android_runtime:
+                self.configure_android(arch=arch, mode=mode)
+                self.build_android(arch=arch, mode=mode)
+            self.debuild(arch=arch, output=self.output(arch))
+
+
+if __name__ == '__main__':
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        diagnose=False,
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+            "<level>{level: <9}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{message}</level>")
+        )
+    fire.Fire(Build())
