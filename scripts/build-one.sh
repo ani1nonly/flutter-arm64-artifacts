@@ -9,13 +9,12 @@ MODE="${3:-release}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$REPO/flutter-src"
 OUT="$ROOT/engine/src/out/android_${MODE}_${ARCH}"
+GS=""
 
 echo "=== building $LIBC gen_snapshot: arch=$ARCH mode=$MODE ==="
 echo "    flutter checkout: $ROOT"
 echo "    ninja out dir   : $OUT"
 
-# flutter/tools/gn must run from the Flutter checkout root; the default out
-# dir is engine/src/out/<target-dir> (e.g. out/android_release_arm64).
 cd "$ROOT"
 export PATH="$HOME/depot_tools:$PATH"
 
@@ -44,18 +43,32 @@ case "$LIBC" in
     ;;
 
   glibc)
-    # Generic aarch64 glibc host, cross-compiled from x64 using the
-    # host_clang_cpu approach from upstream PR flutter/flutter#187591.
-    # Requires patches/linux-arm64-aot.patch to be applied to the engine.
+    # Generic aarch64 glibc host. Cross-compile the HOST gen_snapshot from an
+    # x64 builder using the approach from upstream flutter/flutter#187591.
+    # Build the zip archive target (not the raw Dart target) so the host
+    # toolchain is used and the binary actually runs on linux-arm64.
+    OUT="$ROOT/engine/src/out/glibc_${MODE}_${ARCH}"
+    ZIP_REL="zip_archives/android-arm64-${MODE}/linux-arm64.zip"
+
     vpython3 engine/src/flutter/tools/gn \
       --android --android-cpu "$ARCH" \
       --host-cpu arm64 \
+      --target-dir "glibc_${MODE}_${ARCH}" \
       --no-goma --no-backtrace --clang --lto \
       --no-enable-unittests --no-build-embedder-examples \
       --no-prebuilt-dart-sdk \
-      --runtime-mode "$MODE" \
+      --runtime-mode "$MODE"
 
-    ninja -C "$OUT" flutter/third_party/dart/runtime/bin:gen_snapshot -j"$(nproc)"
+    ninja -C "$OUT" "$ZIP_REL" -j"$(nproc)"
+
+    STAGE=$(mktemp -d)
+    unzip -q "$OUT/$ZIP_REL" -d "$STAGE"
+    GS=$(find "$STAGE" -type f -name gen_snapshot | head -1)
+    if [ -z "$GS" ]; then
+        echo "ERROR: gen_snapshot not found in $OUT/$ZIP_REL" >&2
+        unzip -l "$OUT/$ZIP_REL" | head -20 >&2
+        exit 1
+    fi
     ;;
 
   *)
@@ -67,7 +80,9 @@ esac
 # Collect the binary into a staging directory.
 DIST="$REPO/dist/$LIBC/linux-arm64-android-$MODE"
 mkdir -p "$DIST"
-GS=$(find "$OUT" -type f -name gen_snapshot | head -1)
+if [ -z "$GS" ]; then
+    GS=$(find "$OUT" -type f -name gen_snapshot | head -1)
+fi
 if [ -z "$GS" ]; then
     echo "ERROR: gen_snapshot not found in $OUT" >&2
     exit 1
