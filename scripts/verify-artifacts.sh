@@ -16,6 +16,9 @@ for dir in "$DIST"/linux-arm64-android-*; do
     file -b "$dir/gen_snapshot" | grep -q 'arm64\|aarch64' || {
         echo "FAIL: not aarch64"; fail=1;
     }
+    file -b "$dir/gen_snapshot" | grep -q 'stripped' || {
+        echo "FAIL: binary is not stripped (unexpected size/regression)"; fail=1;
+    }
 
     # Must have android/compressed-pointers config (not linux desktop).
     strings "$dir/gen_snapshot" | grep -q 'compressed-pointers' || {

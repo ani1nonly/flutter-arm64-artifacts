@@ -147,6 +147,27 @@ if [ -z "$GS" ]; then
     exit 1
 fi
 cp "$GS" "$DIST/gen_snapshot"
+
+# Ensure a deterministic, small artifact. Ninja may leave an unstripped
+# intermediate in the out tree; `find` order varies between runners, so always
+# strip the copied binary explicitly. llvm-strip handles both bionic and glibc
+# arm64 ELF files and is present in the Android NDK on GitHub runners.
+STRIP=""
+for candidate in \
+    "${TOOLCHAIN:-}/bin/llvm-strip" \
+    "${ANDROID_NDK_HOME:-}"/toolchains/llvm/prebuilt/*/bin/llvm-strip \
+    /usr/bin/llvm-strip; do
+    [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+    STRIP="$candidate"
+    break
+done
+if [ -n "$STRIP" ]; then
+    "$STRIP" "$DIST/gen_snapshot"
+else
+    echo "WARN: llvm-strip not found; artifact may retain debug info" >&2
+fi
+file "$DIST/gen_snapshot"
+
 ENGINE=$(cat "$ROOT/bin/internal/engine.version" 2>/dev/null || echo unknown)
 echo "$ENGINE" > "$DIST/engine.version"
 
