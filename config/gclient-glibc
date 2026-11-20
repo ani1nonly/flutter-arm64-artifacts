@@ -1,0 +1,29 @@
+# gclient config for the glibc (generic aarch64 Linux) build.
+# No Termux patches: those add is_termux/bionic sysroot handling only.
+# Instead, patches/linux-arm64-aot.patch (from flutter/flutter#187591) is
+# applied by scripts/sync.sh — DEPS before gclient sync, the rest after.
+solutions = [
+  {
+    "managed": False,
+    "name": ".",
+    "url": "https://github.com/flutter/flutter",
+    "deps_file": "DEPS",
+    "safesync_url": "",
+    "custom_deps": {
+      "engine/src/fuchsia/sdk/linux": None,
+      "engine/src/third_party/google_fonts_for_unit_tests": None,
+      "engine/src/flutter/third_party/java/openjdk": None,
+    },
+    "custom_vars" : {
+      "setup_githooks" : False,
+      "use_cipd_goma" : False,
+      "download_emsdk" : False,
+      "download_dart_sdk" : False,
+      "download_linux_deps" : False,
+      "download_fuchsia_sdk" : False,
+      "download_android_deps" : False,
+      "download_windows_deps" : False,
+      "download_fuchsia_deps" : False,
+    },
+  }
+]

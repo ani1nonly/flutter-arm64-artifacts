@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   schedule:
-    # Weekly canary: detect new Flutter stable and attempt a build.
     - cron: '0 3 * * 1'
   workflow_dispatch:
     inputs:
@@ -42,10 +41,8 @@ jobs:
           fi
           echo "tag=$REF" >> "$GITHUB_OUTPUT"
           echo "Resolved Flutter stable: $REF"
-          # Check if we already have a release for this tag.
           if gh release view "$REF" >/dev/null 2>&1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Release $REF already exists — skipping."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
@@ -60,7 +57,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ---------- Cached toolchain setup ----------
       - name: Cache Python packages
         uses: actions/cache@v4
         with:
@@ -88,22 +84,20 @@ jobs:
       - name: Add depot_tools to PATH
         run: echo "$HOME/depot_tools" >> "$GITHUB_PATH"
 
-      # Biggest win: the engine checkout is ~5 GB and takes 10-20 min.
-      # Key includes the patch hash so any patch change forces a fresh sync.
-      - name: Cache Flutter + engine checkout
+      - name: Cache Flutter + engine checkout (bionic)
         id: cache-src
         uses: actions/cache@v4
         with:
           path: flutter-src
-          key: flutter-src-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient', 'patches/*.patch') }}
+          key: flutter-src-bionic-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient', 'patches/engine.patch', 'patches/dart.patch', 'patches/skia.patch') }}
 
-      - name: Checkout Flutter + engine (gclient) — cache miss
+      - name: Checkout Flutter + engine — cache miss
         if: steps.cache-src.outputs.cache-hit != 'true'
-        run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}"
+        run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}" bionic
 
       - name: Verify restored checkout — cache hit
         if: steps.cache-src.outputs.cache-hit == 'true'
-        run: bash scripts/verify-sync.sh "${{ needs.detect.outputs.tag }}"
+        run: bash scripts/verify-sync.sh "${{ needs.detect.outputs.tag }}" bionic
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -112,7 +106,6 @@ jobs:
           name: diag-bionic-${{ needs.detect.outputs.tag }}
           path: |
             logs/**
-            flutter-src/engine/src/flutter/.git/rebase-apply/**
             flutter-src/engine/src/.git/rebase-apply/**
           if-no-files-found: ignore
 
@@ -121,13 +114,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: sysroot
-          key: sysroot-${{ hashFiles('scripts/sysroot.py') }}-v1
+          key: sysroot-${{ hashFiles('scripts/sysroot.py', 'build.toml') }}-v1
 
       - name: Assemble Termux sysroot — cache miss
         if: steps.cache-sysroot.outputs.cache-hit != 'true'
-        run: python3 scripts/sysroot.py sync
+        run: python3 scripts/sysroot.py arm64
 
-      # ---------- Build ----------
       - name: Build Android-target gen_snapshot (bionic, arm64)
         run: |
           for mode in release profile; do
@@ -153,7 +145,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ---------- Cached toolchain setup ----------
       - name: Cache Python packages
         uses: actions/cache@v4
         with:
@@ -181,20 +172,20 @@ jobs:
       - name: Add depot_tools to PATH
         run: echo "$HOME/depot_tools" >> "$GITHUB_PATH"
 
-      - name: Cache Flutter + engine checkout
+      - name: Cache Flutter + engine checkout (glibc)
         id: cache-src
         uses: actions/cache@v4
         with:
           path: flutter-src
-          key: flutter-src-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient', 'patches/*.patch') }}
+          key: flutter-src-glibc-${{ needs.detect.outputs.tag }}-${{ hashFiles('config/gclient-glibc', 'patches/linux-arm64-aot.patch') }}
 
-      - name: Checkout Flutter + engine (gclient) — cache miss
+      - name: Checkout Flutter + engine — cache miss
         if: steps.cache-src.outputs.cache-hit != 'true'
-        run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}"
+        run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}" glibc
 
       - name: Verify restored checkout — cache hit
         if: steps.cache-src.outputs.cache-hit == 'true'
-        run: bash scripts/verify-sync.sh "${{ needs.detect.outputs.tag }}"
+        run: bash scripts/verify-sync.sh "${{ needs.detect.outputs.tag }}" glibc
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -203,14 +194,12 @@ jobs:
           name: diag-glibc-${{ needs.detect.outputs.tag }}
           path: |
             logs/**
-            flutter-src/engine/src/flutter/.git/rebase-apply/**
             flutter-src/engine/src/.git/rebase-apply/**
           if-no-files-found: ignore
 
-      # ---------- Build ----------
       - name: Build Android-target gen_snapshot (glibc, arm64)
-        # Cross-compile from x64 to aarch64 using the approach from upstream
-        # PR flutter/flutter#187591 (host_clang_cpu). No arm64 runners needed.
+        # Cross-compile from x64 to aarch64 via patches/linux-arm64-aot.patch
+        # (derived from upstream flutter/flutter#187591).
         run: |
           for mode in release profile; do
             bash scripts/build-one.sh glibc arm64 "$mode"

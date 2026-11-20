@@ -1,0 +1,34 @@
+# Root config consumed by scripts/sysroot.py (it hardcodes './build.toml').
+# CI overrides the Flutter tag via the workflow; this file supplies the
+# Termux sysroot sources needed to build the bionic gen_snapshot.
+
+[flutter]
+repo = 'https://github.com/flutter/flutter.git'
+path = './flutter-src'
+channel = 'stable'
+
+[build]
+arch = ['arm64']
+runtime = ['release', 'profile']
+android_runtime = ['release', 'profile']
+
+[sysroot]
+path = './sysroot'
+
+[sysroot.termux-main]
+repo = 'https://packages-cf.termux.dev/apt/termux-main/'
+dist = 'stable'
+pkgs = [
+  'at-spi2-core', 'brotli', 'dbus', 'fontconfig', 'freetype', 'fribidi',
+  'gdk-pixbuf', 'glib', 'harfbuzz', 'libcairo', 'libepoxy', 'libexpat',
+  'libffi', 'libglvnd', 'libgraphite', 'libjpeg-turbo', 'liblzma',
+  'libpixman', 'libpng', 'libtiff', 'libwayland', 'libx11', 'libxau',
+  'libxcb', 'libxcursor', 'libxdmcp', 'libxext', 'libxfixes', 'libxft',
+  'libxi', 'libxrandr', 'libxrender', 'libxtst', 'pango', 'pcre2',
+  'swiftshader', 'xorgproto', 'zlib', 'zstd',
+]
+
+[sysroot.termux-x11]
+repo = 'https://packages-cf.termux.dev/apt/termux-x11/'
+dist = 'x11'
+pkgs = ['gtk3', 'libxcomposite', 'libxdamage', 'libxinerama', 'libxkbcommon']
