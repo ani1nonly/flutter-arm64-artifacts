@@ -4,19 +4,29 @@
 set -euo pipefail
 
 TAG="${1:?usage: sync.sh <flutter-tag>}"
-ROOT="$PWD/flutter-src"
-PATCH_DIR="$PWD/patches"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$HERE/flutter-src"
 
 if [ ! -d "$ROOT/.git" ]; then
+    echo "=== cloning Flutter $TAG into $ROOT ==="
     git clone --depth 1 --branch "$TAG" https://github.com/flutter/flutter.git "$ROOT"
 fi
 
 cd "$ROOT"
 
-# gclient sync fetches the engine source and third_party deps, then applies
-# the custom_hooks from config/gclient (patches/engine.patch, dart.patch, skia.patch).
+# gclient requires a .gclient file in the working directory. The Flutter repo
+# does NOT ship one (it lives in the Termux build repo). Copy it in.
+cp "$HERE/config/gclient" "$ROOT/.gclient"
+
+echo "=== gclient sync (fetches engine source + applies patches) ==="
 gclient sync --no-history -v
 
 echo "=== synced Flutter $TAG ==="
 git describe --tags --always
-cat bin/internal/engine.version
+echo "engine: $(cat bin/internal/engine.version)"
+echo "patches applied:"
+grep -q 'is_termux' engine/src/build/config/BUILDCONFIG.gn && echo "  engine.patch OK" || echo "  engine.patch MISSING"
+
+# Keep logs for debugging (persisted in the CI artifact / local dir).
+mkdir -p "$HERE/logs"
+cp "$ROOT/.gclient" "$HERE/logs/gclient-used.txt" 2>/dev/null || true

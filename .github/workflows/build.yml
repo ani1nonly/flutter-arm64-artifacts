@@ -73,6 +73,17 @@ jobs:
       - name: Checkout Flutter + engine (gclient)
         run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}"
 
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-bionic-${{ needs.detect.outputs.tag }}
+          path: |
+            logs/**
+            flutter-src/engine/src/flutter/.git/rebase-apply/**
+            flutter-src/engine/src/.git/rebase-apply/**
+          if-no-files-found: ignore
+
       - name: Assemble Termux sysroot
         run: python3 scripts/sysroot.py sync
 
@@ -115,6 +126,17 @@ jobs:
 
       - name: Checkout Flutter + engine (gclient)
         run: bash scripts/sync.sh "${{ needs.detect.outputs.tag }}"
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-glibc-${{ needs.detect.outputs.tag }}
+          path: |
+            logs/**
+            flutter-src/engine/src/flutter/.git/rebase-apply/**
+            flutter-src/engine/src/.git/rebase-apply/**
+          if-no-files-found: ignore
 
       - name: Build Android-target gen_snapshot (glibc, arm64)
         # Cross-compile from x64 to aarch64 using the approach from upstream
