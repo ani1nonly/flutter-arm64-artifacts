@@ -11,7 +11,7 @@
 #   5. Verifies checksums, installs the binaries, and patches flutter_tools.
 #
 # ONE-LINE INSTALL (auto-detects everything, prompts only if update needed):
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/flutter-arm64-artifacts/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ani1nonly/flutter-arm64-artifacts/main/install.sh | bash
 #
 # NON-INTERACTIVE (auto-accept update):
 #   curl -fsSL .../install.sh | bash -s -- --yes
@@ -20,7 +20,7 @@
 #   --flutter-dir DIR   Use this existing Flutter SDK (skip auto-detection)
 #   --install-dir DIR   Where to clone a new SDK if none found (default: $HOME/flutter)
 #   --tag TAG           Force a specific Flutter tag (default: latest release)
-#   --repo OWNER/REPO   GitHub repo hosting releases (default: OWNER/flutter-arm64-artifacts)
+#   --repo OWNER/REPO   GitHub repo hosting releases (default: ani1nonly/flutter-arm64-artifacts)
 #   --yes, -y           Auto-accept the Flutter update prompt
 #   --no-update         Never update an existing Flutter SDK; abort if mismatched
 #   --force             Reinstall artifacts even if already present
@@ -32,7 +32,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (override via flags or environment)
 # ---------------------------------------------------------------------------
-REPO="${ARTIFACTS_REPO:-OWNER/flutter-arm64-artifacts}"
+REPO="${ARTIFACTS_REPO:-ani1nonly/flutter-arm64-artifacts}"
 BRANCH="${ARTIFACTS_BRANCH:-main}"
 BASE_URL="https://raw.githubusercontent.com/$REPO/$BRANCH"
 RELEASES_API="https://api.github.com/repos/$REPO/releases"
