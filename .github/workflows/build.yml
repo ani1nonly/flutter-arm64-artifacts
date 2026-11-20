@@ -149,6 +149,29 @@ jobs:
           path: sysroot
           key: sysroot-${{ hashFiles('scripts/sysroot.py', 'build.toml') }}-v1
 
+      # The Termux patches import //build/config/sysroot.gni from the host
+      # toolchain too, where current_toolchain != default_toolchain and the
+      # custom_sysroot branch is skipped -- GN then wants the stock x64 sysroot.
+      - name: Restore host x64 Debian sysroot cache
+        id: cache-x64-sysroot
+        uses: actions/cache/restore@v4
+        with:
+          path: flutter-src/engine/src/build/linux/debian_bullseye_amd64-sysroot
+          key: debian-sysroot-x64-v1
+
+      - name: Install host x64 Debian sysroot — cache miss
+        if: steps.cache-x64-sysroot.outputs.cache-hit != 'true'
+        run: |
+          cd flutter-src/engine/src
+          python3 build/linux/sysroot_scripts/install-sysroot.py --arch=x64
+
+      - name: Save host x64 Debian sysroot cache
+        if: always() && steps.cache-x64-sysroot.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: flutter-src/engine/src/build/linux/debian_bullseye_amd64-sysroot
+          key: debian-sysroot-x64-v1
+
       - name: Build Android-target gen_snapshot (bionic, arm64)
         run: |
           for mode in release profile; do
