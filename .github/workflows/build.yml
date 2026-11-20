@@ -1,6 +1,8 @@
 name: Build Flutter linux-arm64 host artifacts
 
 on:
+  push:
+    branches: [main]
   schedule:
     # Weekly canary: detect new Flutter stable and attempt a build.
     - cron: '0 3 * * 1'
