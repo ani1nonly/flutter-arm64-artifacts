@@ -17,6 +17,11 @@ on:
         default: 'both'
         type: choice
         options: [both, bionic, glibc]
+      force:
+        description: 'Rebuild even if a release already exists'
+        required: false
+        default: false
+        type: boolean
 
 env:
   PYTHONUNBUFFERED: '1'
@@ -41,7 +46,10 @@ jobs:
           fi
           echo "tag=$REF" >> "$GITHUB_OUTPUT"
           echo "Resolved Flutter stable: $REF"
-          if gh release view "$REF" >/dev/null 2>&1; then
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "changed=true (forced)" >&2
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif gh release view "$REF" >/dev/null 2>&1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"

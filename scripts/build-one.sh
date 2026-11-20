@@ -27,13 +27,39 @@ case "$LIBC" in
     # GitHub's ubuntu-24.04 runners ship the Android NDK; sysroot.py only
     # assembles Termux packages, it does not download an NDK.
     SYSROOT="$REPO/sysroot"
-    NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_NDK:-${ANDROID_NDK_LATEST_HOME:-}}}"
-    if [ -z "$NDK_HOME" ] && [ -d /usr/local/lib/android/sdk/ndk ]; then
-        NDK_HOME=$(find /usr/local/lib/android/sdk/ndk -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+    # The runner sets ANDROID_NDK_HOME but the deployed image has occasionally
+    # lacked the actual NDK files. Search every plausible location, verify a
+    # real clang++ exists, and install via sdkmanager as a last resort.
+    find_ndk() {
+        local candidate
+        for candidate in \
+            "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK:-}" "${ANDROID_NDK_LATEST_HOME:-}" \
+            "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"/ndk/* \
+            "${ANDROID_HOME:-}"/ndk/* "$HOME/android-sdk/ndk/"*; do
+            [ -n "$candidate" ] || continue
+            [ -x "$candidate/toolchains/llvm/prebuilt/linux-x64/bin/clang++" ] || continue
+            echo "$candidate"
+            return 0
+        done
+        return 1
+    }
+    NDK_HOME=$(find_ndk || true)
+    if [ -z "$NDK_HOME" ]; then
+        echo "WARN: preinstalled NDK missing; installing via sdkmanager ..." >&2
+        SDKM="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}/cmdline-tools/latest/bin/sdkmanager"
+        if [ -x "$SDKM" ]; then
+            yes | "$SDKM" --install "ndk;27.3.13750724" >&2 || true
+            NDK_HOME=$(find_ndk || true)
+        fi
     fi
-    [ -n "$NDK_HOME" ] || { echo "ERROR: Android NDK not found" >&2; exit 1; }
+    if [ -z "$NDK_HOME" ]; then
+        echo "ERROR: no usable Android NDK. Diagnostics:" >&2
+        echo "  ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-unset}" >&2
+        ls -la "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/ndk" 2>&1 | head -20 >&2 || true
+        find /usr/local/lib/android/sdk/ndk -maxdepth 4 -name clang++ 2>/dev/null | head -10 >&2 || true
+        exit 1
+    fi
     TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x64"
-    [ -x "$TOOLCHAIN/bin/clang++" ] || { echo "ERROR: NDK clang++ not found at $TOOLCHAIN/bin/clang++" >&2; exit 1; }
     echo "    NDK toolchain: $TOOLCHAIN"
     API=26
 
