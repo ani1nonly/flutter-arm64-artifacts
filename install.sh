@@ -121,16 +121,21 @@ ok "target artifacts: $LIBC"
 # ---------------------------------------------------------------------------
 log "Step 2/7: Detect existing Flutter SDK"
 CANDIDATES=""
-[ -n "$FLUTTER_DIR" ] && CANDIDATES="$FLUTTER_DIR"
-[ -d "$HOME/flutter" ] && CANDIDATES="$CANDIDATES $HOME/flutter"
+add_candidate() {
+    case " $CANDIDATES " in
+        *" $1 "*) return 0 ;;
+    esac
+    CANDIDATES="${CANDIDATES:+$CANDIDATES }$1"
+}
+[ -n "$FLUTTER_DIR" ] && add_candidate "$FLUTTER_DIR"
+[ -d "$HOME/flutter" ] && add_candidate "$HOME/flutter"
 if [ -n "$PREFIX_DIR" ] && [ -x "$PREFIX_DIR/opt/flutter/bin/flutter" ]; then
-    CANDIDATES="$CANDIDATES $PREFIX_DIR/opt/flutter"
+    add_candidate "$PREFIX_DIR/opt/flutter"
 fi
 if command -v flutter >/dev/null 2>&1; then
     FP=$(readlink -f "$(command -v flutter)" 2>/dev/null || true)
     if [ -n "$FP" ]; then
-        FD=$(dirname "$(dirname "$FP")")
-        CANDIDATES="$CANDIDATES $FD"
+        add_candidate "$(dirname "$(dirname "$FP")")"
     fi
 fi
 
@@ -138,7 +143,11 @@ EXISTING=""
 EXISTING_VER=""
 for c in $CANDIDATES; do
     if [ -x "$c/bin/flutter" ]; then
-        v=$(cat "$c/version" 2>/dev/null || echo "unknown")
+        v=$(cat "$c/version" 2>/dev/null || true)
+        if [ -z "$v" ] && [ -d "$c/.git" ]; then
+            v=$(git -C "$c" describe --tags --exact-match 2>/dev/null || true)
+        fi
+        [ -n "$v" ] || v="unknown"
         info "found SDK at $c (version $v)"
         if [ -z "$EXISTING" ]; then
             EXISTING="$c"
@@ -175,10 +184,12 @@ else
             info "updating Flutter in $EXISTING to $TAG ..."
             (
                 cd "$EXISTING"
-                git fetch --depth 1 origin tag "$TAG" || git fetch --depth 1 origin "$TAG"
+                if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+                    git fetch --depth 1 origin tag "$TAG" || git fetch --depth 1 origin "$TAG"
+                fi
                 git checkout --detach "$TAG"
             ) || err "Flutter update failed"
-            EXISTING_VER=$(cat "$EXISTING/version" 2>/dev/null || echo "$TAG")
+            EXISTING_VER=$(git -C "$EXISTING" describe --tags --exact-match 2>/dev/null || echo "$TAG")
             ok "Flutter updated to $EXISTING_VER"
             FLUTTER_DIR="$EXISTING"
         else
