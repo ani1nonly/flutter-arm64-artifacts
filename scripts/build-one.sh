@@ -7,13 +7,16 @@ LIBC="${1:?usage: build-one.sh <bionic|glibc> <arch> <mode>}"
 ARCH="${2:-arm64}"
 MODE="${3:-release}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# Prefer the apt-installed ninja; depot_tools' ninja wrapper needs a bootstrap
+# that is not present in the cached checkout.
+NINJA=/usr/bin/ninja
+[ -x "$NINJA" ] || NINJA=ninja
 ROOT="$REPO/flutter-src"
 OUT="$ROOT/engine/src/out/android_${MODE}_${ARCH}"
 GS=""
 
 echo "=== building $LIBC gen_snapshot: arch=$ARCH mode=$MODE ==="
 echo "    flutter checkout: $ROOT"
-echo "    ninja out dir   : $OUT"
 
 cd "$ROOT"
 export PATH="$HOME/depot_tools:$PATH"
@@ -25,7 +28,7 @@ case "$LIBC" in
     TOOLCHAIN="$REPO/sysroot/ndk/toolchains/llvm/prebuilt/linux-x64"
     API=26
 
-    vpython3 engine/src/flutter/tools/gn \
+    python3 engine/src/flutter/tools/gn \
       --android --android-cpu "$ARCH" \
       --no-goma --no-backtrace --clang --lto \
       --no-enable-unittests --no-build-embedder-examples \
@@ -39,7 +42,7 @@ case "$LIBC" in
       --gn-args "custom_sysroot=\"$SYSROOT\"" \
       --gn-args 'extra_ldflags=["-llog"]'
 
-    ninja -C "$OUT" flutter/third_party/dart/runtime/bin:gen_snapshot -j"$(nproc)"
+    "$NINJA" -C "$OUT" flutter/third_party/dart/runtime/bin:gen_snapshot -j"$(nproc)"
     ;;
 
   glibc)
@@ -50,7 +53,7 @@ case "$LIBC" in
     OUT="$ROOT/engine/src/out/glibc_${MODE}_${ARCH}"
     ZIP_REL="zip_archives/android-arm64-${MODE}/linux-arm64.zip"
 
-    vpython3 engine/src/flutter/tools/gn \
+    python3 engine/src/flutter/tools/gn \
       --android --android-cpu "$ARCH" \
       --host-cpu arm64 \
       --target-dir "glibc_${MODE}_${ARCH}" \
@@ -59,7 +62,7 @@ case "$LIBC" in
       --no-prebuilt-dart-sdk \
       --runtime-mode "$MODE"
 
-    ninja -C "$OUT" "$ZIP_REL" -j"$(nproc)"
+    "$NINJA" -C "$OUT" "$ZIP_REL" -j"$(nproc)"
 
     STAGE=$(mktemp -d)
     unzip -q "$OUT/$ZIP_REL" -d "$STAGE"
