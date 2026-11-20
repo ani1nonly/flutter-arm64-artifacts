@@ -24,9 +24,26 @@ export PATH="$HOME/depot_tools:$PATH"
 case "$LIBC" in
   bionic)
     # Termux sysroot + NDK clang, cross-compiled from x64 to aarch64 (bionic).
+    # GitHub's ubuntu-24.04 runners ship the Android NDK; sysroot.py only
+    # assembles Termux packages, it does not download an NDK.
     SYSROOT="$REPO/sysroot"
-    TOOLCHAIN="$REPO/sysroot/ndk/toolchains/llvm/prebuilt/linux-x64"
+    NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_NDK:-${ANDROID_NDK_LATEST_HOME:-}}}"
+    if [ -z "$NDK_HOME" ] && [ -d /usr/local/lib/android/sdk/ndk ]; then
+        NDK_HOME=$(find /usr/local/lib/android/sdk/ndk -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+    fi
+    [ -n "$NDK_HOME" ] || { echo "ERROR: Android NDK not found" >&2; exit 1; }
+    TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x64"
+    [ -x "$TOOLCHAIN/bin/clang++" ] || { echo "ERROR: NDK clang++ not found at $TOOLCHAIN/bin/clang++" >&2; exit 1; }
+    echo "    NDK toolchain: $TOOLCHAIN"
     API=26
+
+    # gn args mirror scripts/build-termux.py::_termux_gn_args(), the canonical
+    # Termux configuration. They matter: without them the build links against
+    # the wrong libc++/skia config and misses the Android log/EGL stubs.
+    VULKAN_INC="$TOOLCHAIN/sysroot/usr/include"
+    STUBS="$REPO/scripts/stubs"
+    GN_CFLAGS="[\"-I$VULKAN_INC\", \"-I$STUBS\", \"-D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__\"]"
+    GN_CFLAGS_CC="[\"-I$VULKAN_INC\", \"-I$STUBS\", \"-D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__\", \"-Wno-newline-eof\"]"
 
     python3 engine/src/flutter/tools/gn \
       --android --android-cpu "$ARCH" \
@@ -36,11 +53,20 @@ case "$LIBC" in
       --target-toolchain "$TOOLCHAIN" \
       --runtime-mode "$MODE" \
       --gn-args symbol_level=0 \
+      --gn-args arm_use_neon=false \
+      --gn-args arm_optionally_use_neon=true \
+      --gn-args dart_include_wasm_opt=false \
+      --gn-args dart_platform_sdk=false \
+      --gn-args is_desktop_linux=false \
+      --gn-args use_default_linux_sysroot=false \
+      --gn-args skia_use_perfetto=false \
       --gn-args is_termux=true \
       --gn-args is_termux_host=false \
       --gn-args termux_api_level=$API \
       --gn-args "custom_sysroot=\"$SYSROOT\"" \
-      --gn-args 'extra_ldflags=["-llog"]'
+      --gn-args 'extra_ldflags=["-lEGL", "-lGLESv2", "-llog"]' \
+      --gn-args "extra_cflags=$GN_CFLAGS" \
+      --gn-args "extra_cflags_cc=$GN_CFLAGS_CC"
 
     "$NINJA" -C "$OUT" flutter/third_party/dart/runtime/bin:gen_snapshot -j"$(nproc)"
     ;;
